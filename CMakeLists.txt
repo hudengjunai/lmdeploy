@@ -16,6 +16,8 @@ cmake_minimum_required(VERSION 3.11 FATAL_ERROR) # for PyTorch extensions, versi
 project(TurboMind LANGUAGES CXX CUDA)
 
 find_package(CUDA 10.2 REQUIRED)
+include_directories("/usr/local/cuda/targets/x86_64-linux/include")
+list(PREPEND CMAKE_FIND_ROOT_PATH "/usr/local/cuda/targets/x86_64-linux")
 
 # if(${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "11")
 #   add_definitions("-DENABLE_BF16")
