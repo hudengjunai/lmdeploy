@@ -10,6 +10,8 @@
 #include <thrust/host_vector.h>
 #include <thrust/transform.h>
 
+#undef TORCH_CUDA
+
 #include "src/turbomind/kernels/bert_preprocess_kernels.h"
 #include "src/turbomind/kernels/unfused_attention_kernels.h"
 #include "src/turbomind/models/llama/llama_kernels.h"
@@ -202,15 +204,6 @@ void naive_mha(scalar_t*        out_ptr,
     pad_out(out_ptr, cu_seqlens, batch_size, head_num * seq_len * size_per_head, head_num * size_per_head, stream);
 }
 
-template<typename scalar_t>
-struct UpdateMask {
-    UpdateMask() {}
-    __host__ __device__ scalar_t operator()(const scalar_t& x) const
-    {
-        return x > scalar_t(0.0f) ? scalar_t(1.0f) : scalar_t(0.0f);
-    }
-};
-
 static const char* usage = "Usage: %s <batch-size> <num-heads> <key-len> <query-len> <size-per-head>\n"
                            "Example: $test_context_attention_layer 2, 8, 1024, 512, 128\n";
 
@@ -285,19 +278,21 @@ int main(int argc, const char* argv[])
     // auto* input_lengths  = (int*)allocator.malloc(sizeof(int) * batch_size, false);
     thrust::device_vector<int> input_lengths(batch_size);
     thrust::host_vector<int>   input_lengths_host(batch_size);
+    thrust::device_vector<int> kv_lengths(batch_size);
+    thrust::host_vector<int>   kv_lengths_host(batch_size);
 
     cudaRandomUniform<scalar_t>(query_ptr, batch_size * num_heads * seq_len * size_per_head);
     cudaRandomUniform<scalar_t>(key_ptr, batch_size * num_heads * key_len * size_per_head);
     cudaRandomUniform<scalar_t>(val_ptr, batch_size * num_heads * key_len * size_per_head);
     cudaRandomUniform<scalar_t>(mask_ptr, batch_size * seq_len * key_len);
-    thrust::transform(
-        thrust::device, mask_ptr, mask_ptr + batch_size * seq_len * key_len, mask_ptr, UpdateMask<scalar_t>());
 
     // create random length for batch
-    std::uniform_int_distribution<int> dist{seq_len / 2, seq_len};
-    auto                               gen = [&dist, &mersenne_engine]() { return dist(mersenne_engine); };
-    std::generate(begin(input_lengths_host), end(input_lengths_host), gen);
-    thrust::copy(input_lengths_host.begin(), input_lengths_host.end(), input_lengths.begin());
+    {
+        std::uniform_int_distribution<int> dist{seq_len / 2, seq_len};
+        auto                               gen = [&dist, &mersenne_engine]() { return dist(mersenne_engine); };
+        std::generate(begin(input_lengths_host), end(input_lengths_host), gen);
+        thrust::copy(input_lengths_host.begin(), input_lengths_host.end(), input_lengths.begin());
+    }
     size_t  h_token_num = 0;
     size_t* h_pinned_token_num;
     auto    input_lengths_ptr = thrust::raw_pointer_cast(input_lengths.data());
@@ -311,6 +306,18 @@ int main(int argc, const char* argv[])
                                        seq_len,
                                        stream);
     cudaFreeHost((void*)h_pinned_token_num);
+
+    {
+        std::uniform_int_distribution<int> dist{seq_len, key_len};
+        auto                               gen = [&dist, &mersenne_engine]() { return dist(mersenne_engine); };
+        std::generate(begin(kv_lengths_host), end(kv_lengths_host), gen);
+        thrust::copy(kv_lengths_host.begin(), kv_lengths_host.end(), kv_lengths.begin());
+    }
+    auto kv_lengths_ptr = thrust::raw_pointer_cast(kv_lengths.data());
+    // deviceFill(kv_lengths_ptr, batch_size, key_len, stream);
+
+    invokeCreateCausalMasks(mask_ptr, input_lengths_ptr, kv_lengths_ptr, seq_len, key_len, batch_size, stream);
+    // deviceFill(mask_ptr, batch_size*key_len*seq_len, scalar_t(1), stream);
 
     // compute gt
     naive_mha<scalar_t>(expect_out_ptr,
@@ -334,7 +341,12 @@ int main(int argc, const char* argv[])
                         &cublas_wrapper);
 
     // compute actual
-    using AttentionOp = FlashAttentionOp<scalar_t>;
+#ifdef _MSC_VER
+    static constexpr int FMHA_VERSION = 1;
+#else
+    static constexpr int FMHA_VERSION = 2;
+#endif
+    using AttentionOp = FlashAttentionOpImpl<scalar_t, FMHA_VERSION>;
     using Layout      = typename AttentionOp::AttentionLayout;
     Layout      layout_q{num_heads * seq_len * size_per_head, size_per_head, seq_len * size_per_head};
     Layout      layout_k{num_heads * key_len * size_per_head, size_per_head, key_len * size_per_head};
@@ -351,6 +363,8 @@ int main(int argc, const char* argv[])
                                              accum_buf_ptr,
                                              cu_seqlens_ptr,
                                              nullptr,
+                                             nullptr,
+                                             kv_lengths_ptr,
                                              1,
                                              layout_q,
                                              layout_k,
@@ -359,11 +373,13 @@ int main(int argc, const char* argv[])
     flash_attention(attn_params, stream);
     sync_check_cuda_error();
 
-    // int num_rows = 8;
+    int num_rows = 8;
+    // printf("query:\n");
+    // printMatrix(query_ptr, num_rows, 8, size_per_head, true);
     // printf("expect:\n");
-    // printMatrix(expect_out_ptr, num_rows, size_per_head, size_per_head, true);
+    // printMatrix(expect_out_ptr, num_rows, 8, size_per_head, true);
     // printf("actual:\n");
-    // printMatrix(actual_out_ptr, num_rows, size_per_head, size_per_head, true);
+    // printMatrix(actual_out_ptr, num_rows, 8, size_per_head, true);
     checkResult(
         "all close:", actual_out_ptr, expect_out_ptr, batch_size * num_heads * seq_len * size_per_head, true, true);
 

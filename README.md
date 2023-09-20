@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="resources/lmdeploy-logo.png" width="450"/>
+  <img src="resources/lmdeploy-logo.svg" width="450"/>
 
 [![docs](https://img.shields.io/badge/docs-latest-blue)](https://lmdeploy.readthedocs.io/en/latest/)
 [![badge](https://github.com/InternLM/lmdeploy/workflows/lint/badge.svg)](https://github.com/InternLM/lmdeploy/actions)
@@ -20,6 +20,10 @@ ______________________________________________________________________
 
 ## News 🎉
 
+- \[2023/09\] TurboMind supports InternLM-20B
+- \[2023/09\] TurboMind supports all features of Code Llama: code completion, infilling, chat / instruct, and python specialist. Click [here](./docs/en/supported_models/codellama.md) for deployment guide
+- \[2023/09\] TurboMind supports Baichuan2-7B
+- \[2023/08\] TurboMind supports flash-attention2.
 - \[2023/08\] TurboMind supports Qwen-7B, dynamic NTK-RoPE scaling and dynamic logN scaling
 - \[2023/08\] TurboMind supports Windows (tp=1)
 - \[2023/08\] TurboMind supports 4-bit inference, 2.4x faster than FP16, the fastest open-source implementation🚀. Check [this](./docs/en/w4a16.md) guide for detailed info
@@ -54,19 +58,24 @@ LMDeploy is a toolkit for compressing, deploying, and serving LLM, developed by 
 > **Note**<br />
 > W4A16 inference requires Nvidia GPU with Ampere architecture or above.
 
-|  Models  | Tensor Parallel | FP16 | KV INT8 | W4A16 | W8A8 |
-| :------: | :-------------: | :--: | :-----: | :---: | :--: |
-|  Llama   |       Yes       | Yes  |   Yes   |  Yes  |  No  |
-|  Llama2  |       Yes       | Yes  |   Yes   |  Yes  |  No  |
-| InternLM |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+|    Models    | Tensor Parallel | FP16 | KV INT8 | W4A16 | W8A8 |
+| :----------: | :-------------: | :--: | :-----: | :---: | :--: |
+|    Llama     |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+|    Llama2    |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+| InternLM-7B  |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+| InternLM-20B |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+|   QWen-7B    |       Yes       | Yes  |   Yes   |  No   |  No  |
+| Baichuan-7B  |       Yes       | Yes  |   Yes   |  Yes  |  No  |
+| Baichuan2-7B |       Yes       | Yes  |   No    |  No   |  No  |
+|  Code Llama  |       Yes       | Yes  |   No    |  No   |  No  |
 
 ### Pytorch
 
-|  Models  | Tensor Parallel | FP16 | KV INT8 | W4A16 | W8A8 |
-| :------: | :-------------: | :--: | :-----: | :---: | :--: |
-|  Llama   |       Yes       | Yes  |   No    |  No   |  No  |
-|  Llama2  |       Yes       | Yes  |   No    |  No   |  No  |
-| InternLM |       Yes       | Yes  |   No    |  No   |  No  |
+|   Models    | Tensor Parallel | FP16 | KV INT8 | W4A16 | W8A8 |
+| :---------: | :-------------: | :--: | :-----: | :---: | :--: |
+|    Llama    |       Yes       | Yes  |   No    |  No   |  No  |
+|   Llama2    |       Yes       | Yes  |   No    |  No   |  No  |
+| InternLM-7B |       Yes       | Yes  |   No    |  No   |  No  |
 
 ## Performance
 
@@ -214,45 +223,15 @@ pip install deepspeed
 
 ## Quantization
 
-### Step 1. Obtain Quantization Parameters
-
-First, run the quantization script to obtain the quantization parameters.
-
-> After execution, various parameters needed for quantization will be stored in `$WORK_DIR`; these will be used in the following steps..
-
-```
-python3 -m lmdeploy.lite.apis.calibrate \
-  --model $HF_MODEL \
-  --calib_dataset 'c4' \             # Calibration dataset, supports c4, ptb, wikitext2, pileval
-  --calib_samples 128 \              # Number of samples in the calibration set, if memory is insufficient, you can appropriately reduce this
-  --calib_seqlen 2048 \              # Length of a single piece of text, if memory is insufficient, you can appropriately reduce this
-  --work_dir $WORK_DIR \             # Folder storing Pytorch format quantization statistics parameters and post-quantization weight
-
-```
-
-### Step 2. Actual Model Quantization
-
-`LMDeploy` supports INT4 quantization of weights and INT8 quantization of KV Cache. Run the corresponding script according to your needs.
-
 #### Weight INT4 Quantization
 
 LMDeploy uses [AWQ](https://arxiv.org/abs/2306.00978) algorithm for model weight quantization
 
-> Requires input from the $WORK_DIR of step 1, and the quantized weights will also be stored in this folder.
-
-```
-python3 -m lmdeploy.lite.apis.auto_awq \
-  --model $HF_MODEL \
-  --w_bits 4 \                       # Bit number for weight quantization
-  --w_group_size 128 \               # Group size for weight quantization statistics
-  --work_dir $WORK_DIR \             # Directory saving quantization parameters from Step 1
-```
-
-[Click here](./docs/zh_cn/w4a16.md) to view the test results for weight int4 usage.
+[Click here](./docs/en/w4a16.md) to view the test results for weight int4 usage.
 
 #### KV Cache INT8 Quantization
 
-[Click here](./docs/zh_cn/kv_int8.md) to view the usage method, implementation formula, and test results for kv int8.
+[Click here](./docs/en/kv_int8.md) to view the usage method, implementation formula, and test results for kv int8.
 
 > **Warning**<br />
 > runtime Tensor Parallel for quantilized model is not available. Please setup `--tp` on `deploy` to enable static TP.
